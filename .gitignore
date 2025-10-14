@@ -1,0 +1,69 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+pip-wheel-metadata/
+
+# Poetry / Pipenv
+poetry.lock
+Pipfile.lock
+
+# Node / Frontend
+node_modules/
+*.log
+dist/
+build/
+.parcel-cache/
+.next/
+out/
+
+# Audio & Media artifacts
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.opus
+
+# Model weights / checkpoints
+*.bin
+*.ckpt
+*.pt
+*.safetensors
+models/
+checkpoints/
+
+# Data / cache
+data/
+cache/
+.cache/
+logs/
+tmp/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Containers / runtime
+.docker/
+Dockerfile.local
+
+
+# AI Config
+AGENTS.md
+CLAUDE.md
+.codex/
+.claude/
