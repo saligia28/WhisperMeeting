@@ -25,6 +25,7 @@
 - 工具链选择：`faster-whisper`（CTranslate2 + Metal）在准确率/性能/生态之间最均衡；`whisper.cpp` 做轻量命令行或离线部署；PyTorch 原版主要用于跟随官方最新特性。
 - 说话人分离：Whisper 系列仅负责转写，需叠加 diarization 组件（如 `whisperx` + `pyannote.audio`、`speechbrain`、声纹比对）才能区分不同说话人；固定说话人可预注册声纹提升准确率。
 - 混讲话处理：如需在多人同时发言时保持准确，需要额外的源分离模型（`pyannote/speaker-separation`、`demucs` 等），但会显著增加算力与延迟。
+- 参考行业流程：外部方案常见工作流为“录音 → Whisper 转写 → 预处理 → GPT 分析 → 输出 → 回顾”，配合结构化 Prompt（需求表格、优先级、验收矩阵等）可直接生成交付物；若要离线化，可用本地 LLM（如 Qwen、Llama3）替代 GPT API，并用 Pandas/OpenPyXL、Notion/Jira API 完成自动化导出。
 
 ## TODO / 下一步
 - [ ] 评估目标硬件（CPU/GPU、内存、磁盘）是否能承载计划使用的 Whisper 模型和大模型。（当前环境：MacBook Pro M1 Max 32GB 统一内存，可优先验证 `medium`/`large-v2` 模型在 MPS/Metal 上的实时性能）
@@ -36,3 +37,4 @@
 - [ ] 制定测试与监控方案（各阶段单测、延迟监控、用户验收流程）。
 - [ ] 评估说话人分离方案：对比 `whisperx`（含 `pyannote.audio`）与 `speechbrain` 或声纹注册流程，在本地录音样本上验证准确率与延迟。
 - [ ] 调研必要时的源分离方案（如 `demucs`）对实时性影响，决定是否纳入 MVP。
+- [ ] 设计需求分析自动化：基于结构化 Prompt 的表格输出流程，测试本地 LLM/ChatGPT 生成需求拆解、优先级与验收矩阵的可行性，并规划导出 Notion/Jira 的脚本。
