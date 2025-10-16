@@ -8,11 +8,20 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from ..container import ServiceContainer, build_container
 
 
 api = FastAPI(title="WhisperMeeting API", version="0.1.0")
+
+api.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def get_container() -> ServiceContainer:
@@ -72,3 +81,17 @@ def download_summary(meeting_id: str, container: ContainerDep) -> FileResponse:
     if not summary_path.exists():
         return JSONResponse({"detail": "Summary not found"}, status_code=404)
     return FileResponse(summary_path)
+
+
+@api.get("/meetings/{meeting_id}/transcript")
+def get_transcript(meeting_id: str, container: ContainerDep) -> list[dict]:
+    segments = container.repository.get_transcript_segments(meeting_id)
+    return [
+        {
+            "start": segment.start,
+            "end": segment.end,
+            "text": segment.text,
+            "speaker": segment.speaker,
+        }
+        for segment in segments
+    ]

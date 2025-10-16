@@ -94,3 +94,23 @@ class MeetingRepository:
         with Session(self.engine) as session:
             result = session.exec(select(Meeting)).all()
             return result
+
+    def get_transcript_segments(self, meeting_id: str) -> list[TranscriptSegment]:
+        with Session(self.engine) as session:
+            rows = (
+                session.exec(
+                    select(TranscriptRow)
+                    .where(TranscriptRow.meeting_id == meeting_id)
+                    .order_by(TranscriptRow.start)
+                )
+                .all()
+            )
+            return [
+                TranscriptSegment(
+                    start=row.start,
+                    end=row.end,
+                    text=row.text,
+                    speaker=row.speaker,
+                )
+                for row in rows
+            ]
