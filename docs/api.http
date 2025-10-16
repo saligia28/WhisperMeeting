@@ -1,0 +1,22 @@
+### 健康检查
+GET http://localhost:8000/health
+
+### 硬件评估
+GET http://localhost:8000/hardware/profile
+
+### 上传音频并转写
+POST http://localhost:8000/meetings/demo-meeting/transcribe
+Content-Type: multipart/form-data
+
+--boundary
+Content-Disposition: form-data; name="audio"; filename="sample.wav"
+Content-Type: audio/wav
+
+< ./sample.wav
+--boundary--
+
+### 获取会议列表
+GET http://localhost:8000/meetings
+
+### 下载 Markdown 摘要
+GET http://localhost:8000/meetings/demo-meeting/summary

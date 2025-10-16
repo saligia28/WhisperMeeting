@@ -28,13 +28,13 @@
 - 参考行业流程：外部方案常见工作流为“录音 → Whisper 转写 → 预处理 → GPT 分析 → 输出 → 回顾”，配合结构化 Prompt（需求表格、优先级、验收矩阵等）可直接生成交付物；若要离线化，可用本地 LLM（如 Qwen、Llama3）替代 GPT API，并用 Pandas/OpenPyXL、Notion/Jira API 完成自动化导出。
 
 ## TODO / 下一步
-- [ ] 评估目标硬件（CPU/GPU、内存、磁盘）是否能承载计划使用的 Whisper 模型和大模型。（当前环境：MacBook Pro M1 Max 32GB 统一内存，可优先验证 `medium`/`large-v2` 模型在 MPS/Metal 上的实时性能）
-- [ ] 选定工具链：优先验证 `faster-whisper`（Metal 支持 + Python 生态），同时保留 `whisper.cpp` 作为轻量备选；补充本地大模型服务框架、说话人分离库等。
-- [ ] 设计后端 API，包括开始/停止录音、转写状态、摘要请求、结果下载等接口。
-- [ ] 做命令行原型（音频片段 → 转写 → 摘要）验证两类模型的协同流程。
-- [ ] 绘制前端交互草图，包括控制按钮、实时字幕、标记/摘要视图。
-- [ ] 确定存储结构（原始音频、片段、转写、摘要、重点）和保留策略。
-- [ ] 制定测试与监控方案（各阶段单测、延迟监控、用户验收流程）。
-- [ ] 评估说话人分离方案：对比 `whisperx`（含 `pyannote.audio`）与 `speechbrain` 或声纹注册流程，在本地录音样本上验证准确率与延迟。
-- [ ] 调研必要时的源分离方案（如 `demucs`）对实时性影响，决定是否纳入 MVP。
-- [ ] 设计需求分析自动化：基于结构化 Prompt 的表格输出流程，测试本地 LLM/ChatGPT 生成需求拆解、优先级与验收矩阵的可行性，并规划导出 Notion/Jira 的脚本。
+- [x] 评估目标硬件（CPU/GPU、内存、磁盘）是否能承载计划使用的 Whisper 模型和大模型。（参考 `scripts/evaluate_hardware.py` 与 `docs/hardware_evaluation.md`）
+- [x] 选定工具链：优先验证 `faster-whisper`（Metal 支持 + Python 生态），同时保留 `whisper.cpp` 作为轻量备选；补充本地大模型服务框架、说话人分离库等。（见 `docs/toolchain.md`）
+- [x] 设计后端 API，包括开始/停止录音、转写状态、摘要请求、结果下载等接口。（实现见 `src/whispermeeting/api/app.py` 与 `docs/api.http`）
+- [x] 做命令行原型（音频片段 → 转写 → 摘要）验证两类模型的协同流程。（实现见 `src/whispermeeting/cli.py`）
+- [x] 绘制前端交互草图，包括控制按钮、实时字幕、标记/摘要视图。（见 `docs/frontend.md`）
+- [x] 确定存储结构（原始音频、片段、转写、摘要、重点）和保留策略。（见 `docs/storage.md` 与 `src/whispermeeting/storage/repository.py`）
+- [x] 制定测试与监控方案（各阶段单测、延迟监控、用户验收流程）。 （见 `docs/testing_strategy.md` 与 `tests/`）
+- [x] 评估说话人分离方案：对比 `whisperx`（含 `pyannote.audio`）与 `speechbrain` 或声纹注册流程，在本地录音样本上验证准确率与延迟。（见 `docs/diarization_evaluation.md` 与 `src/whispermeeting/pipeline/diarization.py`）
+- [x] 调研必要时的源分离方案（如 `demucs`）对实时性影响，决定是否纳入 MVP。（见 `docs/source_separation.md`）
+- [x] 设计需求分析自动化：基于结构化 Prompt 的表格输出流程，测试本地 LLM/ChatGPT 生成需求拆解、优先级与验收矩阵的可行性，并规划导出 Notion/Jira 的脚本。（见 `docs/automation.md` 与 `src/whispermeeting/llm/summarizer.py`）
