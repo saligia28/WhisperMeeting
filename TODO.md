@@ -38,3 +38,135 @@
 - [x] 评估说话人分离方案：对比 `whisperx`（含 `pyannote.audio`）与 `speechbrain` 或声纹注册流程，在本地录音样本上验证准确率与延迟。（见 `docs/diarization_evaluation.md` 与 `src/whispermeeting/pipeline/diarization.py`）
 - [x] 调研必要时的源分离方案（如 `demucs`）对实时性影响，决定是否纳入 MVP。（见 `docs/source_separation.md`）
 - [x] 设计需求分析自动化：基于结构化 Prompt 的表格输出流程，测试本地 LLM/ChatGPT 生成需求拆解、优先级与验收矩阵的可行性，并规划导出 Notion/Jira 的脚本。（见 `docs/automation.md` 与 `src/whispermeeting/llm/summarizer.py`）
+
+## 性能问题与代码冗余（待优化）
+
+### 🔴 严重性能问题
+
+1. **ServiceContainer 每次请求都重建** (`src/whispermeeting/api/app.py:31-32`)
+   - **问题描述**：`get_container()` 依赖注入函数每次API请求都调用 `build_container()`，导致：
+     - WhisperModel 每次请求都重新加载（模型加载耗时数秒到数十秒）
+     - LocalLLMSummariser 每次都重新初始化（可能加载大模型）
+     - 数据库引擎重复创建
+   - **影响**：API响应极慢，资源浪费严重，无法支撑并发请求
+   - **解决方案**：使用 FastAPI 的 lifespan context manager 或全局单例模式管理 ServiceContainer
+   - **优先级**：P0 - 立即修复
+
+2. **转写接口缺少异步处理机制** (`src/whispermeeting/api/app.py:146-181`)
+   - **问题描述**：`POST /meetings/{id}/transcribe` 在同步端点中执行耗时的转写和摘要操作
+   - **影响**：
+     - 长音频（>5分钟）会导致请求超时
+     - 阻塞工作线程，降低整体并发能力
+     - 用户体验差，无法获取进度反馈
+   - **解决方案**：
+     - 方案A：使用 FastAPI BackgroundTasks
+     - 方案B：引入 Celery/RQ 任务队列
+     - 添加任务状态查询接口 `GET /meetings/{id}/status`
+   - **优先级**：P0 - 立即修复
+
+3. **重复的数据库查询** (`src/whispermeeting/api/app.py:162-171`)
+   - **问题描述**：`pipeline.run()` 返回的 transcript 已包含 segments，但紧接着又调用 `repository.get_transcript_segments()` 重新查询
+   - **影响**：不必要的数据库往返，增加响应延迟
+   - **解决方案**：直接使用 `output.transcript.segments` 构建响应
+   - **优先级**：P1 - 近期修复
+
+### 🟡 中等性能问题
+
+4. **临时文件清理不完善** (`src/whispermeeting/api/app.py:154-160`)
+   - **问题描述**：
+     - 转写失败时，上传的原始文件可能没有被清理
+     - `transcribe_chunk` 的 WAV 转换失败时文件清理逻辑不健全
+   - **影响**：长期运行会导致磁盘空间泄漏
+   - **解决方案**：使用 `try-finally` 或 context manager 确保临时文件总是被清理
+   - **优先级**：P1 - 近期修复
+
+5. **数据库连接池配置缺失** (`src/whispermeeting/storage/repository.py:45`)
+   - **问题描述**：
+     - SQLModel engine 使用默认连接池配置
+     - 高并发时可能导致连接池耗尽
+   - **解决方案**：
+     - 配置 `pool_size`、`max_overflow`、`pool_pre_ping`
+     - 考虑使用异步 SQLModel（`asyncpg`）
+   - **优先级**：P2 - 后续优化
+
+6. **关键词提取算法效率低** (`src/whispermeeting/pipeline/postprocessing.py:60-69`)
+   - **问题描述**：
+     - 简单的词频统计，没有停用词过滤
+     - 每次调用都重新计算，没有缓存
+     - 对长会议（数千个segment）性能差
+   - **解决方案**：
+     - 引入中文停用词表
+     - 使用更高效的算法（TF-IDF、TextRank）
+     - 对结果进行缓存
+   - **优先级**：P2 - 后续优化
+
+### 🔵 代码冗余问题
+
+7. **Segment 序列化代码重复** (`src/whispermeeting/api/app.py`)
+   - **位置**：133-143行、163-171行、217-225行
+   - **问题**：三个端点都有相同的 segment 转换为 dict 的逻辑
+   - **解决方案**：提取为 `_serialize_segments(segments: list[TranscriptSegment], offset: float = 0.0) -> list[dict]`
+   - **优先级**：P2
+
+8. **音频文件处理逻辑重复** (`src/whispermeeting/api/app.py`)
+   - **位置**：103-131行（transcribe_chunk）、146-160行（transcribe_meeting）
+   - **重复内容**：
+     - 创建上传目录
+     - 写入上传文件
+     - WAV格式转换
+     - 临时文件清理
+   - **解决方案**：提取为 `async def _prepare_audio(upload: UploadFile, target_dir: Path, cleanup_on_error: bool = True) -> Path`
+   - **优先级**：P2
+
+9. **Meeting 创建/更新逻辑分散** (`src/whispermeeting/storage/repository.py`)
+   - **位置**：48-62行（save_transcript）、126-138行（create_meeting）
+   - **问题**：两个方法都有创建或更新 Meeting 的逻辑，容易不一致
+   - **解决方案**：统一为 `_upsert_meeting()` 私有方法
+   - **优先级**：P3
+
+10. **硬编码的音频参数** (`src/whispermeeting/api/app.py:72`)
+    - **问题**：FFmpeg 参数 `"-ar", "16000", "-ac", "1"` 硬编码在代码中
+    - **解决方案**：添加到 `TranscriptionConfig` 或 `ApiConfig` 中
+    - **优先级**：P3
+
+### 🟢 架构增强建议
+
+11. **缺少缓存层**
+    - **问题**：频繁访问的会议摘要、转写结果都直接查询数据库/文件系统
+    - **解决方案**：
+      - 引入 Redis 或内存缓存（`cachetools`、`functools.lru_cache`）
+      - 缓存已完成会议的摘要和转写结果
+    - **优先级**：P3
+
+12. **缺少 API 限流机制**
+    - **问题**：转写是重操作，无限制并发会耗尽 GPU/CPU 资源
+    - **解决方案**：
+      - 使用 `slowapi` 或 `fastapi-limiter` 限制请求频率
+      - 限制同时进行的转写任务数量
+    - **优先级**：P2
+
+13. **日志系统不完善**
+    - **问题**：只有 `print()` 输出，没有结构化日志
+    - **解决方案**：
+      - 引入 `structlog` 或 Python `logging` 模块
+      - 记录转写耗时、API响应时间、错误堆栈
+      - 添加请求追踪 ID
+    - **优先级**：P2
+
+14. **缺少性能监控指标**
+    - **问题**：无法监控系统性能和资源使用
+    - **解决方案**：
+      - 添加 `/metrics` 端点（Prometheus格式）
+      - 监控指标：转写队列长度、平均处理时间、GPU利用率、内存使用
+      - 使用 `prometheus-fastapi-instrumentator`
+    - **优先级**：P3
+
+15. **异常处理不一致**
+    - **问题**：
+      - 有些地方用通用 `Exception`，有些用 `HTTPException`
+      - 错误消息格式不统一（中英文混用）
+    - **解决方案**：
+      - 定义统一的异常处理器（`@app.exception_handler`）
+      - 创建自定义异常类体系
+      - 统一错误响应格式（包含 code、message、details）
+    - **优先级**：P2

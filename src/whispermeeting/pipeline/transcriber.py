@@ -31,12 +31,26 @@ class FasterWhisperTranscriber:
 
     def __init__(self, config: TranscriptionConfig) -> None:
         device = None if config.device == "auto" else config.device
-        self.model = WhisperModel(
-            config.model_size,
-            device=device or "auto",
-            compute_type=config.compute_type,
-        )
         self.cfg = config
+        try:
+            self.model = WhisperModel(
+                config.model_size,
+                device=device or "auto",
+                compute_type=config.compute_type,
+            )
+        except ValueError as exc:
+            message = str(exc).lower()
+            if "compute type" in message and config.compute_type != "int8":
+                # Fall back to int8 for devices (e.g. CPU/MPS) that do not support int8_float16.
+                self.model = WhisperModel(
+                    config.model_size,
+                    device=device or "auto",
+                    compute_type="int8",
+                )
+                self.cfg.compute_type = "int8"
+                print("[FasterWhisperTranscriber] Falling back to compute_type=int8 due to device limitations.", flush=True)
+            else:
+                raise
 
     def transcribe(self, audio_path: Path) -> Transcript:
         segments, info = self.model.transcribe(

@@ -50,6 +50,7 @@ cache/
 .cache/
 logs/
 tmp/
+*.db
 
 # IDEs
 .idea/

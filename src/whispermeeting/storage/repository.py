@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, Optional
 
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel import Field, Session, SQLModel, create_engine, delete, select
 
 from ..config import StorageConfig
 from ..pipeline.transcriber import Transcript, TranscriptSegment
@@ -49,10 +49,18 @@ class MeetingRepository:
         with Session(self.engine) as session:
             meeting = session.get(Meeting, meeting_id)
             if not meeting:
-                meeting = Meeting(id=meeting_id, language=transcript.language, duration=transcript.duration)
+                meeting = Meeting(
+                    id=meeting_id,
+                    title=f"会议 {meeting_id}",
+                    language=transcript.language,
+                    duration=transcript.duration,
+                )
                 session.add(meeting)
+            else:
+                meeting.language = transcript.language or meeting.language
+                meeting.duration = transcript.duration or meeting.duration
 
-            session.exec(select(TranscriptRow).where(TranscriptRow.meeting_id == meeting_id)).all()
+            session.exec(delete(TranscriptRow).where(TranscriptRow.meeting_id == meeting_id))
 
             for seg in transcript.segments:
                 row = TranscriptRow(
@@ -114,3 +122,34 @@ class MeetingRepository:
                 )
                 for row in rows
             ]
+
+    def create_meeting(self, meeting_id: str, title: str | None = None, language: str | None = None) -> Meeting:
+        with Session(self.engine) as session:
+            meeting = session.get(Meeting, meeting_id)
+            if meeting:
+                meeting.title = title or meeting.title
+                if language:
+                    meeting.language = language
+            else:
+                meeting = Meeting(id=meeting_id, title=title, language=language)
+                session.add(meeting)
+            session.commit()
+            session.refresh(meeting)
+            return meeting
+
+    def delete_meeting(self, meeting_id: str) -> bool:
+        """Remove a meeting and all related data. Returns False if the meeting does not exist."""
+        summary_path = Path(self.cfg.summaries_dir) / f"{meeting_id}.md"
+
+        with Session(self.engine) as session:
+            meeting = session.get(Meeting, meeting_id)
+            if not meeting:
+                return False
+
+            session.exec(delete(TranscriptRow).where(TranscriptRow.meeting_id == meeting_id))
+            session.exec(delete(Summary).where(Summary.meeting_id == meeting_id))
+            session.delete(meeting)
+            session.commit()
+
+        summary_path.unlink(missing_ok=True)
+        return True

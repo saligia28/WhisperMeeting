@@ -11,6 +11,7 @@ src/whispermeeting.egg-info/requires.txt
 src/whispermeeting.egg-info/top_level.txt
 src/whispermeeting/api/__init__.py
 src/whispermeeting/api/app.py
+src/whispermeeting/api/server.py
 src/whispermeeting/audio/__init__.py
 src/whispermeeting/audio/recorder.py
 src/whispermeeting/llm/__init__.py

@@ -18,7 +18,7 @@ class HardwareConfig(BaseModel):
 class TranscriptionConfig(BaseModel):
     model_size: str = "medium"
     device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
-    compute_type: Literal["int8", "int8_float16", "float16", "bfloat16", "float32"] = "int8_float16"
+    compute_type: Literal["int8", "int8_float16", "float16", "bfloat16", "float32"] = "int8"
     beam_size: int = 5
     vad: bool = True
     language: Optional[str] = None
@@ -26,14 +26,14 @@ class TranscriptionConfig(BaseModel):
 
 
 class SummariserConfig(BaseModel):
-    provider: Literal["llama_cpp", "transformers"] = "llama_cpp"
+    provider: Literal["stub", "llama_cpp", "transformers"] = "stub"
     model_path: Optional[Path] = None
     max_input_chars: int = Field(4096, ge=512)
     target_format: Literal["markdown", "notion", "jira"] = "markdown"
 
 
 class PostProcessingConfig(BaseModel):
-    enable_speaker_diarization: bool = True
+    enable_speaker_diarization: bool = False
     diarization_model: str = "pyannote/speaker-diarization"
     enable_alignment: bool = True
     enable_keywords: bool = True
