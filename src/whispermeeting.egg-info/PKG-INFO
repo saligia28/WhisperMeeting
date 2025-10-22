@@ -16,10 +16,12 @@ Requires-Dist: jinja2>=3.1
 Requires-Dist: sqlmodel>=0.0.16
 Requires-Dist: sounddevice>=0.4
 Requires-Dist: numpy>=1.26
+Requires-Dist: opencc-python-reimplemented>=0.1.7
 Requires-Dist: scipy>=1.12
 Requires-Dist: pyannote.audio>=3.0
 Requires-Dist: python-multipart>=0.0.9
 Requires-Dist: psutil>=5.9
+Requires-Dist: webrtcvad>=2.0.10
 Provides-Extra: dev
 Requires-Dist: pytest>=8.1; extra == "dev"
 Requires-Dist: httpx>=0.27; extra == "dev"
@@ -31,11 +33,12 @@ WhisperMeeting 是一个本地优先的会议助理原型，围绕 TODO 中的�
 
 ## 主要能力
 
-- FastAPI 后端提供录音、转写、摘要、下载等接口。
-- 支持按音频块实时上传 (`/meetings/{id}/transcribe/chunk`)，前端可在录音时显示即时字幕。
-- CLI 原型可对单个音频文件执行“片段 → 转写 → 摘要”的串联流程。
-- 模块化设计，涵盖音频采集、转写、说话人分离、摘要、存储等组件，便于替换具体实现。
-- 提供硬件评估脚本和测试计划，帮助验证目标环境的可行性。
+- **🎙️ WebSocket 实时转写**：基于 PCM 音频流的真正实时语音识别，延迟 2-3 秒，无浏览器兼容性问题
+- **🚀 FastAPI 后端**：提供录音、转写、摘要、下载等完整 RESTful 接口
+- **📦 批量转写**：支持上传完整音频文件进行离线处理 (`/meetings/{id}/transcribe`)
+- **💻 CLI 工具**：可对单个音频文件执行"片段 → 转写 → 摘要"的串联流程
+- **🔧 模块化设计**：涵盖音频采集、转写、说话人分离、摘要、存储等组件，便于替换具体实现
+- **📊 硬件评估**：提供硬件评估脚本和测试计划，帮助验证目标环境的可行性
 
 ## 环境要求
 
@@ -110,10 +113,45 @@ WhisperMeeting 是一个本地优先的会议助理原型，围绕 TODO 中的�
 
   启动后可参考 `docs/api.http` 的示例请求，或访问 `http://127.0.0.1:8000/docs` 使用 Swagger UI。
 
+### 实时语音转写（推荐）
+
+使用基于 WebSocket + PCM 的实时转写，无浏览器兼容性问题：
+
+1. 启动后端服务（见上文）
+2. 在浏览器中打开 `examples/realtime_transcription.html`
+3. 点击"开始录音"即可看到实时转写结果
+
+**技术特点：**
+- ✅ 使用 AudioContext API 采集原始 PCM 音频流，绕过浏览器编码差异
+- ✅ 通过 WebSocket 实时传输，延迟 2-3 秒
+- ✅ 完全基于本地 Whisper 模型，数据不出服务器
+- ✅ 支持所有现代浏览器（Chrome、Firefox、Safari、Edge）
+
+### 批量音频转写
+
 - 运行 CLI 原型，对单个音频执行转写与摘要：
 
   ```bash
   python -m whispermeeting.cli --input path/to/audio.wav --out-dir ./data/output
+  ```
+
+- 或通过 API 上传完整音频文件：
+
+  ```bash
+  # 创建会议
+  curl -X POST http://localhost:8000/meetings \
+    -H "Content-Type: application/json" \
+    -d '{"meeting_id": "test123", "title": "测试会议"}'
+
+  # 上传音频进行转写
+  curl -X POST http://localhost:8000/meetings/test123/transcribe \
+    -F "audio=@your_audio.wav"
+
+  # 查询转写状态
+  curl http://localhost:8000/meetings/test123/status
+
+  # 获取转写结果
+  curl http://localhost:8000/meetings/test123/result
   ```
 
 - 执行测试与静态检查（需安装开发依赖）：
@@ -125,8 +163,6 @@ WhisperMeeting 是一个本地优先的会议助理原型，围绕 TODO 中的�
 
 - 硬件能力评估脚本位于 `scripts/evaluate_hardware.py`，可在虚拟环境中运行以验证目标机的实时转写能力。
 - 需要快速准备演示数据，可执行 `python scripts/seed_demo_data.py`，它会往本地 SQLite 中注入一条示例会议记录与摘要。
-- 欲搭配前端使用真实接口，可调用 `POST /meetings` 创建会议，再通过 `/meetings/{id}/transcribe` 上传音频；更多示例见 `docs/api.http`。
-- 若需实时字幕，可在录音过程中持续请求 `POST /meetings/{id}/transcribe/chunk?offset=<秒>` 上传短音频片段，返回即时字幕片段后在前端拼接。
 
 ## 快速验证
 
@@ -155,7 +191,8 @@ src/whispermeeting/
 
 ## 后续迭代方向
 
-- 接入真实的实时字幕流（WebSocket / SSE），替换当前基于异步轮询的刷新机制。
-- 将重点标记、摘要等数据通过新接口（例如 `/meetings/{id}/highlights`）持久化，支持团队协作。
-- 把 `summariser.provider` 切换到 `llama_cpp` 或 `transformers`，结合本地或推理服务的模型提升摘要质量。
-- 说话人分离目前默认关闭。未来如需启用，请准备 Hugging Face Access Token、安装 FFmpeg 与 `pyannote.audio` 对应依赖，然后将 `postprocessing.enable_speaker_diarization` 设为 `true` 即可恢复该能力。
+- ✅ **实时转写已实现**：基于 WebSocket + PCM 的实时语音识别已完成，延迟 2-3 秒
+- 将重点标记、摘要等数据通过新接口（例如 `/meetings/{id}/highlights`）持久化，支持团队协作
+- 把 `summariser.provider` 切换到 `llama_cpp` 或 `transformers`，结合本地或推理服务的模型提升摘要质量
+- 说话人分离目前默认关闭。未来如需启用，请准备 Hugging Face Access Token、安装 FFmpeg 与 `pyannote.audio` 对应依赖，然后将 `postprocessing.enable_speaker_diarization` 设为 `true` 即可恢复该能力
+- 优化实时转写的音频缓冲策略，支持自适应分片大小以降低延迟

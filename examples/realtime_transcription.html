@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实时语音转写 - WhisperMeeting</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+
+        .input-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #startBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        #startBtn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        #stopBtn {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        #stopBtn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(245, 87, 108, 0.4);
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status.idle {
+            background: #f0f0f0;
+            color: #666;
+        }
+
+        .status.connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status.recording {
+            background: #d4edda;
+            color: #155724;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .transcript-container {
+            background: #f9f9f9;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .transcript-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .transcript-segment {
+            margin-bottom: 15px;
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .segment-time {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 5px;
+        }
+
+        .segment-text {
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #999;
+            padding: 60px 20px;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .stat-item {
+            flex: 1;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .clear-btn {
+            background: #e0e0e0;
+            color: #666;
+            font-size: 14px;
+            padding: 6px 12px;
+        }
+
+        .clear-btn:hover {
+            background: #d0d0d0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ 实时语音转写</h1>
+        <p class="subtitle">基于 WebSocket + Whisper 的实时语音识别系统</p>
+
+        <div class="controls">
+            <div class="input-group">
+                <label for="serverUrl">服务器地址</label>
+                <input type="text" id="serverUrl" value="ws://localhost:8002" placeholder="ws://localhost:8002">
+            </div>
+            <div class="input-group">
+                <label for="meetingId">会议 ID</label>
+                <input type="text" id="meetingId" placeholder="自动生成" readonly>
+            </div>
+        </div>
+
+        <div class="button-group">
+            <button id="startBtn">
+                <span>▶️</span>
+                <span>开始录音</span>
+            </button>
+            <button id="stopBtn" disabled>
+                <span>⏹️</span>
+                <span>停止录音</span>
+            </button>
+        </div>
+
+        <div id="status" class="status idle">
+            <div class="status-indicator"></div>
+            <span id="statusText">就绪 - 点击"开始录音"以启动实时转写</span>
+        </div>
+
+        <div class="transcript-container">
+            <div class="transcript-title">
+                <span>转写结果</span>
+                <button id="clearBtn" class="clear-btn">清空</button>
+            </div>
+            <div id="transcriptContent">
+                <div class="empty-state">
+                    <div class="empty-state-icon">🎤</div>
+                    <div>等待语音输入...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-value" id="segmentCount">0</div>
+                <div class="stat-label">转写片段</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="duration">0.0s</div>
+                <div class="stat-label">录音时长</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="dataSize">0 KB</div>
+                <div class="stat-label">数据大小</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class RealtimeTranscriber {
+            constructor() {
+                this.websocket = null;
+                this.audioContext = null;
+                this.audioWorkletNode = null;
+                this.mediaStream = null;
+                this.isRecording = false;
+                this.meetingId = this.generateMeetingId();
+                this.segmentCount = 0;
+                this.totalDuration = 0;
+                this.totalDataSize = 0;
+
+                this.SAMPLE_RATE = 16000;
+                this.BUFFER_SIZE = 4096;
+
+                this.initUI();
+            }
+
+            generateMeetingId() {
+                return `meeting_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            }
+
+            initUI() {
+                document.getElementById('meetingId').value = this.meetingId;
+                document.getElementById('startBtn').addEventListener('click', () => this.start());
+                document.getElementById('stopBtn').addEventListener('click', () => this.stop());
+                document.getElementById('clearBtn').addEventListener('click', () => this.clearTranscript());
+            }
+
+            updateStatus(type, message) {
+                const statusEl = document.getElementById('status');
+                const statusTextEl = document.getElementById('statusText');
+
+                statusEl.className = `status ${type}`;
+                statusTextEl.textContent = message;
+            }
+
+            updateStats() {
+                document.getElementById('segmentCount').textContent = this.segmentCount;
+                document.getElementById('duration').textContent = `${this.totalDuration.toFixed(1)}s`;
+                document.getElementById('dataSize').textContent = `${(this.totalDataSize / 1024).toFixed(1)} KB`;
+            }
+
+            async start() {
+                try {
+                    this.updateStatus('connecting', '正在连接服务器...');
+                    document.getElementById('startBtn').disabled = true;
+
+                    // 获取麦克风权限
+                    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            sampleRate: this.SAMPLE_RATE,
+                            channelCount: 1,
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                        }
+                    });
+
+                    // 创建 AudioContext
+                    this.audioContext = new AudioContext({ sampleRate: this.SAMPLE_RATE });
+                    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+
+                    // 使用 ScriptProcessorNode (兼容性更好，虽然已废弃但仍广泛支持)
+                    const processor = this.audioContext.createScriptProcessor(this.BUFFER_SIZE, 1, 1);
+
+                    processor.onaudioprocess = (e) => {
+                        if (!this.isRecording) return;
+
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        // 转换为 16-bit PCM
+                        const pcmData = this.floatTo16BitPCM(inputData);
+
+                        if (this.websocket && this.websocket.readyState === WebSocket.OPEN) {
+                            this.websocket.send(pcmData);
+                            this.totalDataSize += pcmData.byteLength;
+                            this.updateStats();
+                        }
+                    };
+
+                    source.connect(processor);
+                    processor.connect(this.audioContext.destination);
+
+                    this.audioWorkletNode = processor;
+
+                    // 连接 WebSocket
+                    const serverUrl = document.getElementById('serverUrl').value;
+                    const wsUrl = `${serverUrl}/meetings/${this.meetingId}/transcribe/realtime?sample_rate=${this.SAMPLE_RATE}`;
+
+                    this.websocket = new WebSocket(wsUrl);
+
+                    this.websocket.onopen = () => {
+                        this.isRecording = true;
+                        this.updateStatus('recording', '🔴 正在录音中... 请开始说话');
+                        document.getElementById('stopBtn').disabled = false;
+                    };
+
+                    this.websocket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        this.handleServerMessage(data);
+                    };
+
+                    this.websocket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.updateStatus('error', '连接错误 - 请检查服务器是否运行');
+                        this.stop();
+                    };
+
+                    this.websocket.onclose = () => {
+                        if (this.isRecording) {
+                            this.updateStatus('idle', '连接已关闭');
+                            this.stop();
+                        }
+                    };
+
+                } catch (error) {
+                    console.error('启动失败:', error);
+                    this.updateStatus('error', `启动失败: ${error.message}`);
+                    document.getElementById('startBtn').disabled = false;
+                }
+            }
+
+            floatTo16BitPCM(float32Array) {
+                const buffer = new ArrayBuffer(float32Array.length * 2);
+                const view = new DataView(buffer);
+
+                for (let i = 0; i < float32Array.length; i++) {
+                    let s = Math.max(-1, Math.min(1, float32Array[i]));
+                    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+                }
+
+                return buffer;
+            }
+
+            handleServerMessage(data) {
+                console.log('Server message:', data);
+
+                switch (data.type) {
+                    case 'session_started':
+                        console.log('Session started:', data);
+                        break;
+
+                    case 'transcription':
+                        if (data.segments && data.segments.length > 0) {
+                            this.addTranscriptSegments(data.segments);
+                            this.totalDuration = Math.max(this.totalDuration, data.offset + data.duration);
+                            this.updateStats();
+                        }
+                        break;
+
+                    case 'error':
+                        this.updateStatus('error', `服务器错误: ${data.message}`);
+                        break;
+
+                    default:
+                        console.warn('Unknown message type:', data.type);
+                }
+            }
+
+            addTranscriptSegments(segments) {
+                const container = document.getElementById('transcriptContent');
+
+                // 移除空状态提示
+                if (container.querySelector('.empty-state')) {
+                    container.innerHTML = '';
+                }
+
+                segments.forEach(seg => {
+                    const segmentEl = document.createElement('div');
+                    segmentEl.className = 'transcript-segment';
+
+                    const timeEl = document.createElement('div');
+                    timeEl.className = 'segment-time';
+                    timeEl.textContent = `${this.formatTime(seg.start)} - ${this.formatTime(seg.end)}`;
+
+                    const textEl = document.createElement('div');
+                    textEl.className = 'segment-text';
+                    textEl.textContent = seg.text;
+
+                    segmentEl.appendChild(timeEl);
+                    segmentEl.appendChild(textEl);
+                    container.appendChild(segmentEl);
+
+                    this.segmentCount++;
+                });
+
+                // 自动滚动到底部
+                container.scrollTop = container.scrollHeight;
+            }
+
+            formatTime(seconds) {
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${mins}:${secs.toString().padStart(2, '0')}`;
+            }
+
+            stop() {
+                this.isRecording = false;
+
+                if (this.websocket) {
+                    this.websocket.close();
+                    this.websocket = null;
+                }
+
+                if (this.audioWorkletNode) {
+                    this.audioWorkletNode.disconnect();
+                    this.audioWorkletNode = null;
+                }
+
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
+                }
+
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(track => track.stop());
+                    this.mediaStream = null;
+                }
+
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                this.updateStatus('idle', '已停止录音');
+            }
+
+            clearTranscript() {
+                const container = document.getElementById('transcriptContent');
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🎤</div>
+                        <div>等待语音输入...</div>
+                    </div>
+                `;
+
+                this.segmentCount = 0;
+                this.totalDuration = 0;
+                this.totalDataSize = 0;
+                this.updateStats();
+
+                // 生成新的 meeting ID
+                this.meetingId = this.generateMeetingId();
+                document.getElementById('meetingId').value = this.meetingId;
+            }
+        }
+
+        // 初始化应用
+        const app = new RealtimeTranscriber();
+    </script>
+</body>
+</html>

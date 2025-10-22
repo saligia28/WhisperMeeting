@@ -12,12 +12,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket, status
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from ..container import ServiceContainer, build_container
+from .realtime import handle_realtime_transcription
 
 
 class TaskStatus(str, Enum):
@@ -133,7 +134,31 @@ async def _write_upload(upload: UploadFile, base_dir: Path) -> Path:
     data = await upload.read()
     if not data:
         raise HTTPException(status_code=400, detail="上传的音频文件为空。")
+
     target.write_bytes(data)
+
+    # 记录上传文件的详细信息
+    print(f"[Upload] 文件: {upload.filename}, 大小: {len(data)} 字节, MIME: {upload.content_type}", flush=True)
+
+    # 验证音频文件格式（仅作为警告，不阻止处理）
+    if suffix.lower() == ".webm":
+        # WebM 文件应该以 0x1A 0x45 0xDF 0xA3 (EBML 头) 开始
+        if len(data) >= 4:
+            header = data[:4]
+            if header == b'\x1a\x45\xdf\xa3':
+                print(f"[Upload] WebM 文件头验证成功（完整文件）", flush=True)
+            else:
+                print(f"[Upload] 警告：WebM 文件头不标准: {header.hex()}", flush=True)
+                print(f"[Upload] 这可能是 MediaRecorder 分块流（缺少完整头部），将尝试转换", flush=True)
+    elif suffix.lower() == ".mp4":
+        # MP4 文件通常以 ftyp 开始（偏移 4 字节后）
+        if len(data) >= 12:
+            ftype_marker = data[4:8]
+            if ftype_marker == b'ftyp':
+                print(f"[Upload] MP4 文件头验证成功", flush=True)
+            else:
+                print(f"[Upload] 警告：MP4 文件头不标准。标记: {ftype_marker}", flush=True)
+
     return target
 
 
@@ -157,7 +182,26 @@ def _ensure_wav(source: Path) -> Path:
         raise HTTPException(status_code=500, detail="缺少 ffmpeg，无法转换音频。请安装后重试。")
 
     target = source.with_suffix(".wav")
-    cmd = [ffmpeg_bin, "-y", "-i", str(source), "-ar", "16000", "-ac", "1", str(target)]
+    # WebM/Opus 音频转换参数（针对浏览器 MediaRecorder 生成的文件）
+    # -hide_banner: 隐藏FFmpeg版本信息
+    # -loglevel error: 只显示错误日志
+    # -strict -2: 允许实验性编解码器
+    # -vn: 忽略视频流（WebM 可能包含元数据视频轨道）
+    # -acodec libopus: 显式指定 Opus 解码器（WebM 常用）
+    # -f wav: 强制输出WAV格式
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-y",
+        "-i", str(source),
+        "-vn",            # 忽略视频流
+        "-ar", "16000",   # 16kHz sample rate
+        "-ac", "1",       # Mono
+        "-strict", "-2",  # Allow experimental codecs
+        "-f", "wav",      # Force WAV output
+        str(target)
+    ]
 
     print(f"[FFmpeg] Converting {source.name} to WAV...", flush=True)
 
@@ -175,16 +219,26 @@ def _ensure_wav(source: Path) -> Path:
         print(f"[FFmpeg] Conversion failed for {source.name}", flush=True)
         print(f"[FFmpeg] Command: {' '.join(cmd)}", flush=True)
         print(f"[FFmpeg] Exit code: {exc.returncode}", flush=True)
+        print(f"[FFmpeg] File size: {source.stat().st_size} bytes", flush=True)
         if stdout:
             print(f"[FFmpeg] stdout: {stdout}", flush=True)
         if stderr:
             print(f"[FFmpeg] stderr: {stderr}", flush=True)
 
-        detail = f"音频转换失败 ({source.suffix} -> WAV)：Whisper 只支持 WAV 格式。"
-        if "Invalid data" in stderr or "does not contain any stream" in stderr:
-            detail += " 上传的音频文件可能已损坏或格式不受支持。"
-        elif stderr:
-            detail += f" FFmpeg 错误：{stderr[-200:]}"  # 只显示最后 200 字符
+        # 检查文件是否为空
+        file_size = source.stat().st_size
+        if file_size == 0:
+            detail = f"上传的音频文件为空（0 字节）。请检查前端录音逻辑。"
+        elif file_size < 100:
+            detail = f"上传的音频文件过小（{file_size} 字节），可能未正确录制。"
+        elif "Invalid data" in stderr or "does not contain any stream" in stderr:
+            detail = f"音频转换失败：上传的 {source.suffix} 文件可能已损坏或格式不受支持。文件大小：{file_size} 字节"
+        elif "moov atom not found" in stderr:
+            detail = f"音频转换失败：{source.suffix} 文件不完整（moov atom 缺失）。这通常表示录音未正常完成。"
+        else:
+            detail = f"音频转换失败 ({source.suffix} -> WAV)。"
+            if stderr:
+                detail += f" FFmpeg 错误：{stderr[-200:]}"
 
         raise HTTPException(status_code=500, detail=detail) from exc
 
@@ -380,3 +434,24 @@ def get_transcript(meeting_id: str, container: ContainerDep) -> list[dict]:
         }
         for segment in segments
     ]
+
+
+@api.websocket("/meetings/{meeting_id}/transcribe/realtime")
+async def websocket_realtime_transcription(
+    websocket: WebSocket,
+    meeting_id: str,
+    sample_rate: int = 16000,
+) -> None:
+    """WebSocket endpoint for real-time transcription using PCM audio streams.
+
+    The client should send raw PCM audio data (16-bit signed integers, little-endian)
+    at the specified sample rate. Transcription results are sent back as JSON messages.
+
+    Message format (server to client):
+    - session_started: {"type": "session_started", "meeting_id": str, ...}
+    - transcription: {"type": "transcription", "segments": [...], "offset": float, ...}
+    - error: {"type": "error", "message": str}
+    """
+    # Get container from app state instead of dependency injection
+    container = websocket.app.state.container
+    await handle_realtime_transcription(websocket, meeting_id, container, sample_rate)

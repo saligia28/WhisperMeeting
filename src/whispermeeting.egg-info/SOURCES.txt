@@ -11,6 +11,7 @@ src/whispermeeting.egg-info/requires.txt
 src/whispermeeting.egg-info/top_level.txt
 src/whispermeeting/api/__init__.py
 src/whispermeeting/api/app.py
+src/whispermeeting/api/realtime.py
 src/whispermeeting/api/server.py
 src/whispermeeting/audio/__init__.py
 src/whispermeeting/audio/recorder.py
@@ -24,6 +25,7 @@ src/whispermeeting/pipeline/transcriber.py
 src/whispermeeting/storage/__init__.py
 src/whispermeeting/storage/repository.py
 src/whispermeeting/utils/__init__.py
+src/whispermeeting/utils/chinese.py
 src/whispermeeting/utils/hardware.py
 tests/test_api.py
 tests/test_pipeline.py

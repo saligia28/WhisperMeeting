@@ -9,6 +9,7 @@ from typing import Iterable, List, Optional
 from faster_whisper import WhisperModel
 
 from ..config import TranscriptionConfig
+from ..utils.chinese import ensure_simplified
 
 
 @dataclass
@@ -53,27 +54,39 @@ class FasterWhisperTranscriber:
                 raise
 
     def transcribe(self, audio_path: Path) -> Transcript:
+        language = self.cfg.language or "zh"
         segments, info = self.model.transcribe(
             str(audio_path),
             beam_size=self.cfg.beam_size,
-            language=self.cfg.language,
+            language=language,
             task="translate" if self.cfg.translate_to_english else "transcribe",
             vad_filter=self.cfg.vad,
+            temperature=self.cfg.temperature,
+            initial_prompt=self.cfg.initial_prompt,
         )
 
         transcript_segments: List[TranscriptSegment] = []
+        should_simplify = (
+            self.cfg.force_simplified_chinese
+            and not self.cfg.translate_to_english
+            and language
+            and language.lower().startswith("zh")
+        )
         for seg in segments:
+            text = seg.text.strip()
+            if should_simplify:
+                text = ensure_simplified(text)
             transcript_segments.append(
                 TranscriptSegment(
                     start=seg.start,
                     end=seg.end,
-                    text=seg.text.strip(),
+                    text=text,
                 )
             )
 
         return Transcript(
             segments=transcript_segments,
-            language=info.language if info else None,
+            language=(info.language if info and info.language else language),
             duration=info.duration if info else None,
         )
 

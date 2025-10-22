@@ -9,20 +9,23 @@ from pydantic import BaseModel, Field
 
 
 class HardwareConfig(BaseModel):
-    target_model: Literal["tiny", "base", "small", "medium", "large-v2"] = "medium"
+    target_model: Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"] = "large-v3"
     prefer_gpu: bool = True
     prefer_metal: bool = True
     real_time_latency_budget_ms: int = 2000
 
 
 class TranscriptionConfig(BaseModel):
-    model_size: str = "medium"
+    model_size: str = "./models/large-v3"  # Local model path
     device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
     compute_type: Literal["int8", "int8_float16", "float16", "bfloat16", "float32"] = "int8"
     beam_size: int = 5
     vad: bool = True
-    language: Optional[str] = None
+    language: Optional[str] = "zh"  # Default to Chinese for better accuracy (avoids language detection overhead)
     translate_to_english: bool = False
+    temperature: float = 0.0
+    initial_prompt: Optional[str] = None  # Removed to prevent hallucination when no speech is detected
+    force_simplified_chinese: bool = True
 
 
 class SummariserConfig(BaseModel):

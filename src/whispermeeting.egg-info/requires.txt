@@ -8,10 +8,12 @@ jinja2>=3.1
 sqlmodel>=0.0.16
 sounddevice>=0.4
 numpy>=1.26
+opencc-python-reimplemented>=0.1.7
 scipy>=1.12
 pyannote.audio>=3.0
 python-multipart>=0.0.9
 psutil>=5.9
+webrtcvad>=2.0.10
 
 [dev]
 pytest>=8.1
