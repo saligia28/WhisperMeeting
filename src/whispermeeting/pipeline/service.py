@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from .postprocessing import MeetingArtifacts, PostProcessor
 from .transcriber import Transcript
@@ -36,8 +37,26 @@ class MeetingPipeline:
         self.summariser = summariser
         self.repo = repository
 
-    def run(self, meeting_id: str, audio_path: Path) -> PipelineOutput:
-        transcript = self.transcriber.transcribe(audio_path)
+    def run(
+        self,
+        meeting_id: str,
+        audio_path: Path,
+        vad_aggressiveness: Optional[int] = None,
+        min_speech_ratio: Optional[float] = None,
+    ) -> PipelineOutput:
+        """Run the full pipeline with optional VAD parameter overrides.
+
+        Args:
+            meeting_id: Unique meeting identifier
+            audio_path: Path to audio file
+            vad_aggressiveness: Override VAD aggressiveness (0-3)
+            min_speech_ratio: Override minimum speech ratio (0.3-0.8)
+        """
+        transcript = self.transcriber.transcribe(
+            audio_path,
+            vad_aggressiveness=vad_aggressiveness,
+            min_speech_ratio=min_speech_ratio,
+        )
         transcript = self.post_processor.enrich_transcript(transcript, audio_path)
 
         summary = self.summariser.predict(transcript)

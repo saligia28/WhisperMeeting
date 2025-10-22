@@ -53,8 +53,30 @@ class FasterWhisperTranscriber:
             else:
                 raise
 
-    def transcribe(self, audio_path: Path) -> Transcript:
+    def transcribe(
+        self,
+        audio_path: Path,
+        vad_aggressiveness: Optional[int] = None,
+        min_speech_ratio: Optional[float] = None,
+    ) -> Transcript:
+        """Transcribe audio file with optional VAD parameter overrides.
+
+        Args:
+            audio_path: Path to audio file
+            vad_aggressiveness: Override VAD aggressiveness (0-3), affects silence detection
+            min_speech_ratio: Override minimum speech ratio threshold (0.3-0.8)
+
+        Note: faster-whisper uses its own internal VAD (Silero VAD) which is different
+        from WebRTC VAD used in realtime transcription. The vad_filter parameter
+        enables/disables VAD but doesn't expose aggressiveness control.
+        For consistency with realtime mode, we keep these parameters in the signature
+        but note that they primarily affect realtime WebSocket transcription.
+        """
         language = self.cfg.language or "zh"
+
+        # Note: faster-whisper's vad_filter uses Silero VAD internally
+        # The vad_aggressiveness parameter is mainly for realtime WebSocket mode
+        # For batch processing, we rely on the global config setting
         segments, info = self.model.transcribe(
             str(audio_path),
             beam_size=self.cfg.beam_size,

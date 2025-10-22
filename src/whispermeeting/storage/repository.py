@@ -33,6 +33,13 @@ class Summary(SQLModel, table=True):
     keywords: str
 
 
+class UserSettings(SQLModel, table=True):
+    """User preferences for VAD parameters and other settings."""
+    user_id: str = Field(primary_key=True)
+    vad_aggressiveness: int = Field(default=1, ge=0, le=3)  # 降低到1，更宽松的VAD检测
+    min_speech_ratio: float = Field(default=0.3, ge=0.3, le=0.8)  # 降低到30%，更容易触发转录
+
+
 class MeetingRepository:
     """Simple repository storing data on disk."""
 
@@ -153,3 +160,36 @@ class MeetingRepository:
 
         summary_path.unlink(missing_ok=True)
         return True
+
+    def get_user_settings(self, user_id: str) -> UserSettings:
+        """Get user settings, creating default if not exists."""
+        with Session(self.engine) as session:
+            settings = session.get(UserSettings, user_id)
+            if not settings:
+                settings = UserSettings(user_id=user_id)
+                session.add(settings)
+                session.commit()
+                session.refresh(settings)
+            return settings
+
+    def update_user_settings(
+        self,
+        user_id: str,
+        vad_aggressiveness: Optional[int] = None,
+        min_speech_ratio: Optional[float] = None,
+    ) -> UserSettings:
+        """Update user settings and return the updated object."""
+        with Session(self.engine) as session:
+            settings = session.get(UserSettings, user_id)
+            if not settings:
+                settings = UserSettings(user_id=user_id)
+                session.add(settings)
+
+            if vad_aggressiveness is not None:
+                settings.vad_aggressiveness = max(0, min(3, vad_aggressiveness))
+            if min_speech_ratio is not None:
+                settings.min_speech_ratio = max(0.3, min(0.8, min_speech_ratio))
+
+            session.commit()
+            session.refresh(settings)
+            return settings

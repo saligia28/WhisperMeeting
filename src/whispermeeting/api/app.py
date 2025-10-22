@@ -77,6 +77,20 @@ def get_container(request: Request) -> ServiceContainer:
 ContainerDep = Annotated[ServiceContainer, Depends(get_container)]
 
 
+def get_user_id(request: Request) -> str:
+    """Extract user identifier from request (using client IP as temporary solution)."""
+    # Use X-Forwarded-For if behind proxy, otherwise use direct client IP
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        client_ip = forwarded_for.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown"
+    return f"user_{client_ip}"
+
+
+UserIdDep = Annotated[str, Depends(get_user_id)]
+
+
 class MeetingCreateRequest(BaseModel):
     meeting_id: str | None = None
     title: str | None = None
@@ -90,11 +104,24 @@ class MeetingResponse(BaseModel):
     duration: float | None = None
 
 
+class UserSettingsResponse(BaseModel):
+    """User settings for VAD parameters."""
+    vad_aggressiveness: int
+    min_speech_ratio: float
+
+
+class UserSettingsUpdateRequest(BaseModel):
+    """Request model for updating user settings."""
+    vad_aggressiveness: int | None = None
+    min_speech_ratio: float | None = None
+
+
 def _run_transcription_pipeline(
     meeting_id: str,
     wav_path: Path,
     container: ServiceContainer,
     tasks_dict: dict[str, TaskInfo],
+    user_id: str,
 ) -> None:
     """后台任务：执行转写和摘要流程"""
     task = tasks_dict[meeting_id]
@@ -104,8 +131,22 @@ def _run_transcription_pipeline(
         task.progress = 0.1
         task.updated_at = datetime.now()
 
-        # 执行转写流程
-        output = container.pipeline.run(meeting_id, wav_path)
+        # 获取用户VAD设置
+        user_settings = container.repository.get_user_settings(user_id)
+        print(
+            f"[Background] Using user settings for {user_id}: "
+            f"vad_aggressiveness={user_settings.vad_aggressiveness}, "
+            f"min_speech_ratio={user_settings.min_speech_ratio}",
+            flush=True
+        )
+
+        # 执行转写流程(应用用户设置)
+        output = container.pipeline.run(
+            meeting_id,
+            wav_path,
+            vad_aggressiveness=user_settings.vad_aggressiveness,
+            min_speech_ratio=user_settings.min_speech_ratio,
+        )
 
         # 完成
         task.status = TaskStatus.COMPLETED
@@ -255,6 +296,34 @@ def hardware_profile(container: ContainerDep) -> dict:
     return container.hardware_profiler.to_dict()
 
 
+@api.get("/user/settings", response_model=UserSettingsResponse)
+def get_user_settings(user_id: UserIdDep, container: ContainerDep) -> UserSettingsResponse:
+    """Get current user's VAD settings."""
+    settings = container.repository.get_user_settings(user_id)
+    return UserSettingsResponse(
+        vad_aggressiveness=settings.vad_aggressiveness,
+        min_speech_ratio=settings.min_speech_ratio,
+    )
+
+
+@api.put("/user/settings", response_model=UserSettingsResponse)
+def update_user_settings(
+    payload: UserSettingsUpdateRequest,
+    user_id: UserIdDep,
+    container: ContainerDep,
+) -> UserSettingsResponse:
+    """Update user's VAD settings."""
+    settings = container.repository.update_user_settings(
+        user_id=user_id,
+        vad_aggressiveness=payload.vad_aggressiveness,
+        min_speech_ratio=payload.min_speech_ratio,
+    )
+    return UserSettingsResponse(
+        vad_aggressiveness=settings.vad_aggressiveness,
+        min_speech_ratio=settings.min_speech_ratio,
+    )
+
+
 @api.post("/meetings", response_model=MeetingResponse)
 def create_meeting(payload: MeetingCreateRequest, container: ContainerDep) -> MeetingResponse:
     meeting_id = payload.meeting_id or uuid.uuid4().hex
@@ -314,6 +383,7 @@ async def transcribe_meeting(
     request: Request,
     background_tasks: BackgroundTasks,
     container: ContainerDep,
+    user_id: UserIdDep,
     audio: UploadFile = File(...),
 ) -> dict:
     """启动异步转写任务，立即返回任务状态"""
@@ -332,13 +402,14 @@ async def transcribe_meeting(
     )
     request.app.state.tasks[meeting_id] = task_info
 
-    # 启动后台任务
+    # 启动后台任务(传递user_id以应用用户VAD设置)
     background_tasks.add_task(
         _run_transcription_pipeline,
         meeting_id,
         wav_path,
         container,
         request.app.state.tasks,
+        user_id,
     )
 
     return {

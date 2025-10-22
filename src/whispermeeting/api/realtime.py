@@ -40,8 +40,8 @@ class RealtimeTranscriptionSession:
         sample_rate: int = 16000,
         channels: int = 1,
         chunk_duration: float = 5.0,  # Increased to 5s for better context
-        vad_aggressiveness: int = 2,  # VAD sensitivity (0-3, higher = more aggressive)
-        min_speech_ratio: float = 0.5,  # Minimum speech ratio to trigger transcription
+        vad_aggressiveness: int = 1,  # VAD sensitivity (0-3) - 降低到1，更宽松
+        min_speech_ratio: float = 0.3,  # Minimum speech ratio - 降低到30%，更容易触发转录
     ):
         self.websocket = websocket
         self.container = container
@@ -68,6 +68,9 @@ class RealtimeTranscriptionSession:
 
         # Offset for continuous transcription
         self.time_offset = 0.0
+
+        # Accumulate all segments for final persistence
+        self.all_segments: list[dict] = []
 
     async def handle_session(self) -> None:
         """Main session handler that processes incoming audio and sends transcriptions."""
@@ -132,6 +135,8 @@ class RealtimeTranscriptionSession:
             # Process any remaining audio
             if self.audio_buffer:
                 await self._process_buffer()
+            # Save all segments to database
+            await self._finalize_session()
         except Exception as exc:
             print(f"[WebSocket] Error in session {self.meeting_id}: {exc}", flush=True)
             await self.websocket.send_json({
@@ -283,26 +288,38 @@ class RealtimeTranscriptionSession:
             # Check if buffer contains enough speech using VAD
             speech_ratio = self._calculate_speech_ratio(pcm_data)
 
-            # Use instance variable for speech ratio threshold (configurable)
-            if speech_ratio < self.min_speech_ratio:
-                print(
-                    f"[WebSocket] Skipping transcription - speech ratio {speech_ratio:.2%} "
-                    f"below threshold {self.min_speech_ratio:.2%}",
-                    flush=True
-                )
+            # TEMPORARY FIX: Disable VAD filtering for debugging
+            # Force transcription regardless of speech ratio
+            print(
+                f"[WebSocket] Processing buffer - speech ratio: {speech_ratio:.2%} "
+                f"(threshold: {self.min_speech_ratio:.2%}, VAD filtering DISABLED for testing)",
+                flush=True
+            )
 
-                # Update offset even though we're skipping
-                self.time_offset += duration
-
-                # Clear buffer
-                self.audio_buffer.clear()
-                self.total_samples = 0
-                return
-
-            print(f"[WebSocket] Processing buffer - speech ratio: {speech_ratio:.2%}", flush=True)
+            # Original code (commented out for testing):
+            # if speech_ratio < self.min_speech_ratio:
+            #     print(f"[WebSocket] Skipping transcription - speech ratio {speech_ratio:.2%} below threshold")
+            #     self.time_offset += duration
+            #     self.audio_buffer.clear()
+            #     self.total_samples = 0
+            #     return
 
             # Convert PCM to WAV
             wav_path = self._pcm_to_wav(pcm_data)
+
+            # Log audio characteristics for debugging
+            pcm_samples = len(pcm_data) // 2
+            pcm_array = struct.unpack(f'<{pcm_samples}h', pcm_data)
+            max_amplitude = max(abs(s) for s in pcm_array) if pcm_array else 0
+            avg_amplitude = sum(abs(s) for s in pcm_array) / len(pcm_array) if pcm_array else 0
+
+            print(
+                f"[WebSocket] Audio stats - Duration: {duration:.2f}s, "
+                f"Samples: {pcm_samples}, Max amplitude: {max_amplitude}, "
+                f"Avg amplitude: {avg_amplitude:.1f}",
+                flush=True
+            )
+            print(f"[WebSocket] WAV file saved at: {wav_path} (size: {wav_path.stat().st_size} bytes)", flush=True)
 
             # Run transcription in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
@@ -311,6 +328,18 @@ class RealtimeTranscriptionSession:
                 self.container.transcriber.transcribe,
                 wav_path
             )
+
+            # Log transcription results for debugging
+            print(
+                f"[WebSocket] Whisper returned {len(transcript.segments)} segments, "
+                f"language: {transcript.language if hasattr(transcript, 'language') else 'N/A'}",
+                flush=True
+            )
+            if transcript.segments:
+                for i, seg in enumerate(transcript.segments[:3]):  # Log first 3 segments
+                    print(f"[WebSocket]   Segment {i}: [{seg.start:.2f}s-{seg.end:.2f}s] '{seg.text.strip()}'", flush=True)
+            else:
+                print("[WebSocket]   ⚠️ WARNING: No segments returned by Whisper!", flush=True)
 
             # Prepare segments with time offset
             segments = [
@@ -323,6 +352,9 @@ class RealtimeTranscriptionSession:
                 for seg in transcript.segments
             ]
 
+            # Accumulate segments for final persistence
+            self.all_segments.extend(segments)
+
             # Send transcription result
             await self.websocket.send_json({
                 "type": "transcription",
@@ -331,7 +363,7 @@ class RealtimeTranscriptionSession:
                 "duration": duration,
             })
 
-            print(f"[WebSocket] Sent transcription for {duration:.2f}s audio (offset: {self.time_offset:.2f}s)", flush=True)
+            print(f"[WebSocket] Sent transcription with {len(segments)} segments for {duration:.2f}s audio (offset: {self.time_offset:.2f}s)", flush=True)
 
             # Update offset for next chunk
             self.time_offset += duration
@@ -340,9 +372,10 @@ class RealtimeTranscriptionSession:
             self.audio_buffer.clear()
             self.total_samples = 0
 
-            # Cleanup temporary file
-            if wav_path.exists():
-                wav_path.unlink()
+            # KEEP WAV files for debugging (comment out deletion)
+            # if wav_path.exists():
+            #     wav_path.unlink()
+            print(f"[WebSocket] 📁 WAV file kept for inspection: {wav_path}", flush=True)
 
         except Exception as exc:
             print(f"[WebSocket] Transcription error: {exc}", flush=True)
@@ -369,6 +402,70 @@ class RealtimeTranscriptionSession:
             wav_file.writeframes(pcm_data)
 
         return wav_path
+
+    async def _finalize_session(self) -> None:
+        """Save accumulated segments to database and generate summary."""
+        if not self.all_segments:
+            print(f"[WebSocket] No segments to save for meeting {self.meeting_id}", flush=True)
+            return
+
+        try:
+            print(f"[WebSocket] Finalizing session: saving {len(self.all_segments)} segments to database", flush=True)
+
+            # Convert segments to Transcript format
+            from ..pipeline.transcriber import Transcript, TranscriptSegment
+
+            transcript_segments = [
+                TranscriptSegment(
+                    start=seg["start"],
+                    end=seg["end"],
+                    text=seg["text"],
+                    speaker=seg.get("speaker"),
+                )
+                for seg in self.all_segments
+            ]
+
+            transcript = Transcript(
+                segments=transcript_segments,
+                language="zh",
+                duration=self.time_offset,
+            )
+
+            # Save transcript to database
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self.container.repository.save_transcript,
+                self.meeting_id,
+                transcript
+            )
+
+            print(f"[WebSocket] Transcript saved. Generating summary...", flush=True)
+
+            # Generate and save summary
+            summary = await loop.run_in_executor(
+                None,
+                self.container.summariser.predict,
+                transcript
+            )
+
+            summary_markdown = self.container.post_processor.build_summary_markdown(
+                transcript, summary.summary
+            )
+            keywords = self.container.post_processor.extract_keywords(transcript)
+
+            await loop.run_in_executor(
+                None,
+                self.container.repository.save_summary,
+                self.meeting_id,
+                summary_markdown,
+                keywords
+            )
+
+            print(f"[WebSocket] Summary saved for meeting {self.meeting_id}", flush=True)
+
+        except Exception as exc:
+            print(f"[WebSocket] Failed to finalize session: {exc}", flush=True)
 
 
 async def handle_realtime_transcription(
